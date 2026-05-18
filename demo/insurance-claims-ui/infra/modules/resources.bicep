@@ -164,6 +164,15 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'VSS_BASE_URL', value: vssBaseUrl }
             { name: 'FOUNDRY_AGENT_ENDPOINT', value: foundryAgentEndpoint }
             { name: 'STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION', value: 'false' }
+            // DefaultAzureCredential needs to know WHICH managed identity to
+            // request a token for when there's no system-assigned MI. With a
+            // user-assigned MI only, the SDK can't auto-discover — setting
+            // AZURE_CLIENT_ID makes ManagedIdentityCredential request tokens
+            // for this specific MI. Without it, the in-pod call to
+            // DefaultAzureCredential().get_token(...) raises
+            // ClientAuthenticationError with "Unable to load the proper
+            // Managed Identity".
+            { name: 'AZURE_CLIENT_ID', value: uaIdentity.properties.clientId }
           ]
         }
       ]
