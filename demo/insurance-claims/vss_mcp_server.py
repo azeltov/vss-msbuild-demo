@@ -31,6 +31,7 @@ the agent's MCP tool config at `python /abs/path/vss_mcp_server.py`.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from pathlib import Path
@@ -38,6 +39,8 @@ from typing import Any
 
 import httpx
 from mcp.server.fastmcp import FastMCP
+
+logger = logging.getLogger(__name__)
 
 # VSS's LVS chat agent wraps its chain-of-thought + internal tool traces in
 # <agent-think>...<agent-think-step>...</agent-think-step>...</agent-think>
@@ -115,8 +118,17 @@ def vss_analyze_video(video_id: str, question: str) -> str:
     if MOCK_VSS:
         fixture = _VSS_FIXTURES_DIR / f"{video_id}.txt"
         if fixture.is_file():
-            return fixture.read_text().strip()
-        return _MOCK_VSS_FALLBACK.format(video_id=video_id)
+            text = fixture.read_text().strip()
+            source = f"fixtures/vss/{video_id}.txt"
+        else:
+            text = _MOCK_VSS_FALLBACK.format(video_id=video_id)
+            source = "fallback (no fixture for this video_id)"
+        logger.info(
+            "MOCK_VSS=true: vss_analyze_video bypassed VSS HTTP call "
+            "for video_id=%s, source=%s, length=%d",
+            video_id, source, len(text),
+        )
+        return f"[MOCK_VSS — replayed from {source}]\n\n{text}"
 
     prompt = f"Video reference: '{video_id}'.\n\n{question}"
     payload = {"messages": [{"role": "user", "content": prompt}]}

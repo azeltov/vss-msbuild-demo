@@ -20,6 +20,7 @@ agent thread. The agent only needs to ANALYZE.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from datetime import datetime, timezone
@@ -29,6 +30,8 @@ from typing import Annotated, Any
 import httpx
 from agent_framework import tool
 from pydantic import Field
+
+logger = logging.getLogger(__name__)
 
 VSS_BASE_URL = os.environ.get("VSS_BASE_URL", "http://vss.104.45.71.11.nip.io").rstrip("/")
 HTTP_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=300.0, pool=10.0)
@@ -94,8 +97,22 @@ def vss_analyze_video(
     if MOCK_VSS:
         fixture = _VSS_FIXTURES_DIR / f"{video_id}.txt"
         if fixture.is_file():
-            return fixture.read_text().strip()
-        return _MOCK_VSS_FALLBACK.format(video_id=video_id)
+            text = fixture.read_text().strip()
+            source = f"fixtures/vss/{video_id}.txt"
+        else:
+            text = _MOCK_VSS_FALLBACK.format(video_id=video_id)
+            source = "fallback (no fixture for this video_id)"
+        # Loud, easy-to-grep log so App Insights traces (and `azd ai agent
+        # invoke --local` stderr) show exactly which code path fired.
+        logger.info(
+            "MOCK_VSS=true: vss_analyze_video bypassed VSS HTTP call "
+            "for video_id=%s, source=%s, length=%d",
+            video_id, source, len(text),
+        )
+        # Prefix the returned text with a visible marker so the agent's
+        # final summary (and the App Insights tool-output traces) clearly
+        # signal that this run was mocked, not live VSS.
+        return f"[MOCK_VSS — replayed from {source}]\n\n{text}"
 
     prompt = f"Video reference: '{video_id}'.\n\n{question}"
     payload = {"messages": [{"role": "user", "content": prompt}]}

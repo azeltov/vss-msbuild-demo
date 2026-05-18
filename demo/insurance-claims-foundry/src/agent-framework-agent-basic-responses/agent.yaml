@@ -30,4 +30,4 @@ environment_variables:
     # AKS-down state. The agent still calls gpt-4.1 (so LLM tokens cost), but
     # the GPU cluster can be stopped for cost savings.
     - name: MOCK_VSS
-      value: "false"
+      value: "true"
