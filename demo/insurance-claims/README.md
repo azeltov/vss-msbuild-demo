@@ -10,7 +10,7 @@ A working scaffold for an end-to-end insurance claims demo where:
 - VSS is integrated via **MCP** so the same wrapper works with Foundry,
   Claude, OpenAI Agents SDK, etc.
 
-See [architecture.md](architecture.md) for the sequence diagram and design
+See [../README.md](../README.md) for the sequence diagram and design
 rationale.
 
 ## Files

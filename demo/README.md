@@ -300,7 +300,7 @@ The pricing engine is a deliberately simple mock so the demo runs offline. The i
 
 ```
 demo/
-├── architecture.md             ← this file
+├── README.md                  ← this file
 ├── insurance-claims/           ← MCP-based local prototype (Anthropic/OpenAI clients)
 │   ├── vss_mcp_server.py
 │   ├── tools.py
