@@ -197,7 +197,7 @@ The default `VSS_BASE_URL` points at the workshop's AKS-hosted VSS Agent. The tw
 | video_id | Description | Suggested fallback policy |
 |---|---|---|
 | `302857` | Pexels clip 302857 — wrecked car on graffiti street, severe front collision | `POL-2025-44912` (Alex Romero / Camry) |
-| `3974558-hd_1920_1080_30fps` | Pexels clip 3974558 — HD front-end collision walkaround | `POL-2025-58820` (Priya Shankar / Civic) |
+| `3974558-hd_1920_1080_30fps` | Pexels clip 3974558 — HD front-end collision walkaround | `POL-2025-58820` (Priya Shankar / Fiat Stilo) |
 
 To upload your own video to VST first, see the wrapper's [`vss_upload_video`](../../../insurance-claims/vss_mcp_server.py) helper in the sibling demo folder, or use the VST API directly:
 

@@ -17,9 +17,6 @@ services:
                     cpu: "0.25"
                     memory: 0.5Gi
             deployments:
-                # Note: gpt-4.1-mini (the original init template) hallucinated tool
-                # calls in this multi-step orchestration. We switched to gpt-4.1
-                # (full). Capacity 50 = 50K TPM Standard, plenty for the workshop.
                 - model:
                     format: OpenAI
                     name: gpt-4.1

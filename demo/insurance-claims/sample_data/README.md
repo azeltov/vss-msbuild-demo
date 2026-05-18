@@ -7,7 +7,7 @@ Three mock auto-insurance policies, used by `tools.lookup_policy`:
 | Policy # | Customer | Vehicle | VIN | Deductible |
 |---|---|---|---|---|
 | POL-2025-44912 | Alex Romero | 2022 Toyota Camry SE | `4T1G11AK7NU012345` | $500 |
-| POL-2025-58820 | Priya Shankar | 2024 Honda Civic Sport | `2HGFE2F58RH567890` | $1000 |
+| POL-2025-58820 | Priya Shankar | 2008 Fiat Stilo | `ZFA19200080123456` | $1000 |
 | POL-2025-67114 | Marcus Chen | 2023 Ford F-150 XLT | `1FTFW1ED5NFA98765` | $0 (liability only) |
 
 ## Bring your own damage video

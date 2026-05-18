@@ -8,18 +8,20 @@
     "coverage_tier": "Comprehensive",
     "deductible_usd": 500,
     "effective_date": "2024-11-01",
-    "expires_date": "2026-11-01"
+    "expires_date": "2026-11-01",
+    "sample_video": "sample-videos/toyota.mp4"
   },
   {
     "policy_number": "POL-2025-58820",
     "customer_name": "Priya Shankar",
     "customer_email": "priya.s@example.com",
-    "vehicle": "2024 Honda Civic Sport",
-    "vin": "2HGFE2F58RH567890",
+    "vehicle": "2008 Fiat Stilo",
+    "vin": "ZFA19200080123456",
     "coverage_tier": "Collision + Comprehensive",
     "deductible_usd": 1000,
     "effective_date": "2025-02-15",
-    "expires_date": "2027-02-15"
+    "expires_date": "2027-02-15",
+    "sample_video": "sample-videos/fiat.mp4"
   },
   {
     "policy_number": "POL-2025-67114",

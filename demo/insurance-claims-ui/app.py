@@ -21,6 +21,7 @@ Run:
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import json
 import os
@@ -33,7 +34,9 @@ import streamlit as st
 from azure.identity import DefaultAzureCredential
 
 # ---------------------------------------------------------------------------
-# Config — override via env vars if endpoints change
+# Config — env vars seed the defaults; the in-app ⚙️ Settings expander lets a
+# user point this UI at a different VSS / hosted-agent deployment for the
+# current browser session.
 # ---------------------------------------------------------------------------
 
 HERE = Path(__file__).parent
@@ -41,11 +44,11 @@ POLICIES_PATH = HERE / "policies.json"
 OUTPUT_DIR = HERE / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-VSS_BASE_URL = os.environ.get(
+DEFAULT_VSS_BASE_URL = os.environ.get(
     "VSS_BASE_URL", "http://vss.104.45.71.11.nip.io"
 ).rstrip("/")
 
-FOUNDRY_ENDPOINT = os.environ.get(
+DEFAULT_FOUNDRY_ENDPOINT = os.environ.get(
     "FOUNDRY_AGENT_ENDPOINT",
     "https://ai-account-rux2wabbpeht4.services.ai.azure.com/api/projects/ai-project-insurance-claims-foundry-dev/agents/insurance-claims-triage/endpoint/protocols/openai/responses?api-version=2025-11-15-preview",
 )
@@ -53,6 +56,16 @@ FOUNDRY_ENDPOINT = os.environ.get(
 FOUNDRY_TOKEN_SCOPE = "https://ai.azure.com/.default"
 
 HTTP_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=300.0, pool=10.0)
+
+
+def _vss_url() -> str:
+    """Current VSS base URL — overridable via the in-app ⚙️ Settings expander."""
+    return st.session_state.get("vss_base_url", DEFAULT_VSS_BASE_URL).rstrip("/")
+
+
+def _foundry_endpoint() -> str:
+    """Current Foundry hosted-agent /responses endpoint — overridable via Settings."""
+    return st.session_state.get("foundry_endpoint", DEFAULT_FOUNDRY_ENDPOINT)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,7 +85,7 @@ def load_policies() -> list[dict]:
 def upload_video_to_vss(filename: str, video_bytes: bytes) -> str:
     """Get a VST presigned upload URL, PUT the bytes, return the video_id."""
     with httpx.Client(timeout=HTTP_TIMEOUT) as client:
-        r = client.post(f"{VSS_BASE_URL}/api/v1/videos", json={"filename": filename})
+        r = client.post(f"{_vss_url()}/api/v1/videos", json={"filename": filename})
         r.raise_for_status()
         upload_url = r.json()["url"]
         # VST URL is .../v1/storage/file/<video_id>/<timestamp>; the second-to-last
@@ -85,6 +98,84 @@ def upload_video_to_vss(filename: str, video_bytes: bytes) -> str:
     return video_id
 
 
+def _vss_video_exists(video_id: str, timeout: float = 10.0) -> bool:
+    """Check if VST already has a video with this canonical `video_id`.
+
+    VSS exposes `GET /vst/api/v1/storage/file/list` which returns a dict keyed
+    by sensor_id, with arrays of clips; each clip's `metadata.streamName` is
+    the canonical video_id (filename stem). Fail-open: return False on any
+    network/parse error so the caller falls through to a real upload.
+    """
+    try:
+        with httpx.Client(timeout=httpx.Timeout(timeout)) as client:
+            r = client.get(
+                f"{_vss_url()}/vst/api/v1/storage/file/list",
+                params={"offset": 0, "limit": 500},
+            )
+            r.raise_for_status()
+            data = r.json()
+    except (httpx.HTTPError, ValueError):
+        return False
+
+    for clips in data.values():
+        if not isinstance(clips, list):
+            continue
+        for clip in clips:
+            if (clip.get("metadata") or {}).get("streamName") == video_id:
+                return True
+    return False
+
+
+def upload_video_to_vss_cached(filename: str, video_bytes: bytes) -> tuple[str, str]:
+    """Upload to VSS if needed; otherwise reuse an existing video_id.
+
+    Three-tier cache (each step is cheaper / more authoritative than the next):
+
+      1. Session cache  — keyed by sha256(bytes). Same bytes uploaded already
+         this session → use the cached video_id. No network.
+
+      2. VSS list check — keyed by filename stem (== VSS canonical video_id,
+         which the upstream upload-URL handler derives deterministically from
+         the filename). Catches the case where a previous session / container
+         already uploaded this file. One GET to /vst/.../file/list.
+
+      3. Fresh upload   — POST /api/v1/videos for the URL, PUT bytes.
+
+    Returns (video_id, source) where source is one of "session-cache",
+    "vss-name-match", "fresh-upload".
+    """
+    cache_key = hashlib.sha256(video_bytes).hexdigest()
+    cache: dict = st.session_state.setdefault("vss_uploads", {})
+
+    # 1. Same bytes seen this session?
+    if cache_key in cache:
+        return cache[cache_key]["video_id"], "session-cache"
+
+    # 2. Server-side existence by filename. VSS's video_id ==
+    #    filename.rsplit(".", 1)[0] per the upstream handler.
+    candidate_id = filename.rsplit(".", 1)[0] or filename
+    if _vss_video_exists(candidate_id):
+        cache[cache_key] = {
+            "video_id": candidate_id,
+            "filename": filename,
+            "size_bytes": len(video_bytes),
+            "uploaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "source": "vss-name-match",
+        }
+        return candidate_id, "vss-name-match"
+
+    # 3. Fresh upload.
+    video_id = upload_video_to_vss(filename, video_bytes)
+    cache[cache_key] = {
+        "video_id": video_id,
+        "filename": filename,
+        "size_bytes": len(video_bytes),
+        "uploaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "source": "fresh-upload",
+    }
+    return video_id, "fresh-upload"
+
+
 def call_foundry_agent(prompt: str) -> dict:
     """POST to the deployed Foundry agent's /responses endpoint.
 
@@ -95,7 +186,7 @@ def call_foundry_agent(prompt: str) -> dict:
     payload = {"input": prompt, "stream": False}
     with httpx.Client(timeout=HTTP_TIMEOUT) as client:
         r = client.post(
-            FOUNDRY_ENDPOINT,
+            _foundry_endpoint(),
             json=payload,
             headers={
                 "Authorization": f"Bearer {token}",
@@ -301,34 +392,57 @@ st.caption(
 
 policies = load_policies()
 
-# ---- Sidebar: customer / policy list ------------------------------------
+# ---- Settings (runtime endpoint overrides) ------------------------------
+#
+# Seed session_state once from the env-var defaults; the text_inputs below
+# then read/write through `key=` directly.
 
-with st.sidebar:
-    st.header("Customer Policies")
-    st.dataframe(
-        [
-            {
-                "Policy": p["policy_number"],
-                "Customer": p["customer_name"],
-                "Vehicle": p["vehicle"],
-                "Deductible": f"${p['deductible_usd']}",
-            }
-            for p in policies
-        ],
-        hide_index=True,
-        width="stretch",
+if "vss_base_url" not in st.session_state:
+    st.session_state.vss_base_url = DEFAULT_VSS_BASE_URL
+if "foundry_endpoint" not in st.session_state:
+    st.session_state.foundry_endpoint = DEFAULT_FOUNDRY_ENDPOINT
+
+
+def _clear_upload_cache() -> None:
+    """Re-pointing VSS invalidates cached video_ids — they belong to the old host."""
+    st.session_state["vss_uploads"] = {}
+
+
+with st.expander("⚙️ Service endpoints", expanded=False):
+    st.caption(
+        "Point this UI at a different VSS / hosted-agent deployment without "
+        "redeploying the container. Values persist for this browser session "
+        "only. Re-set the VSS URL to clear any cached video uploads from the "
+        "previous deployment."
     )
-
-    st.markdown("---")
-    st.subheader("Service endpoints")
-    st.code(f"VSS:     {VSS_BASE_URL}", language="text")
-    short = FOUNDRY_ENDPOINT.split("/api/projects/")[-1].split("/agents/")
-    if len(short) == 2:
-        st.code(
-            f"Foundry: {short[0]}\n"
-            f"Agent:   {short[1].split('/endpoint')[0]}",
-            language="text",
-        )
+    st.text_input(
+        "VSS Base URL",
+        key="vss_base_url",
+        on_change=_clear_upload_cache,
+        help=(
+            "Base URL of your NVIDIA VSS Agent deployment "
+            "(e.g. http://vss.<EXTERNAL_HOST>.nip.io). No trailing slash needed."
+        ),
+    )
+    st.text_input(
+        "Foundry Hosted-Agent Endpoint",
+        key="foundry_endpoint",
+        help=(
+            "Full /endpoint/protocols/openai/responses URL of the hosted "
+            "Foundry agent. Bearer auth via DefaultAzureCredential."
+        ),
+    )
+    cols = st.columns([1, 1, 4])
+    with cols[0]:
+        if st.button("🔄 Reset to defaults"):
+            st.session_state.pop("vss_base_url", None)
+            st.session_state.pop("foundry_endpoint", None)
+            _clear_upload_cache()
+            st.rerun()
+    with cols[1]:
+        if st.button("🧹 Clear upload cache"):
+            _clear_upload_cache()
+            st.toast("Cleared in-session VSS upload cache.", icon="🧹")
 
 # ---- Main: claim filing form --------------------------------------------
 
@@ -350,14 +464,58 @@ with left:
     with st.expander("Policy details", expanded=True):
         st.json(selected)
 
-    video_file = st.file_uploader(
-        "Damage video", type=["mp4", "mov", "m4v"], accept_multiple_files=False
-    )
+    # If the policy bundles a pre-loaded sample video (path relative to this
+    # script), give the user a radio to pick it instead of uploading. Default
+    # to the bundled option when available so the demo "just works" out of
+    # the box for that policy.
+    sample_path: Path | None = None
+    sample_rel = selected.get("sample_video")
+    if sample_rel:
+        candidate = HERE / sample_rel
+        if candidate.is_file():
+            sample_path = candidate
 
+    video_choice = "upload"  # default when no bundled sample exists
+    if sample_path is not None:
+        video_choice = st.radio(
+            "Damage video",
+            options=["bundled", "upload"],
+            format_func=lambda v: (
+                f"📹 Use bundled sample ({sample_path.name}, "
+                f"{sample_path.stat().st_size / 1e6:.1f} MB)"
+                if v == "bundled"
+                else "📤 Upload my own"
+            ),
+            horizontal=False,
+            index=0,
+        )
+
+    video_file = None
+    if video_choice == "upload":
+        video_file = st.file_uploader(
+            "Damage video", type=["mp4", "mov", "m4v"], accept_multiple_files=False
+        )
+
+    # Preview whichever video the user is about to submit (bundled file from
+    # disk, or the in-memory UploadedFile). Lets the rep eyeball the clip
+    # before paying for a VSS analysis pass.
+    preview_source = None
+    if video_choice == "bundled" and sample_path is not None:
+        preview_source = str(sample_path)
+    elif video_choice == "upload" and video_file is not None:
+        preview_source = video_file
+
+    if preview_source is not None:
+        with st.expander("📺 Preview", expanded=True):
+            st.video(preview_source)
+
+    # Submit is enabled if either the bundled sample is selected or a file
+    # has been uploaded.
+    have_video = (video_choice == "bundled") or (video_file is not None)
     submit = st.button(
         "Submit claim ↗",
         type="primary",
-        disabled=video_file is None,
+        disabled=not have_video,
         width="stretch",
     )
 
@@ -367,13 +525,35 @@ with right:
     if not submit:
         placeholder.info("Fill out the form on the left and submit to file a claim.")
 
-if submit and video_file:
+if submit and have_video:
+    # Resolve the bytes to send based on which source the user chose.
+    if video_choice == "bundled" and sample_path is not None:
+        video_name = sample_path.name
+        video_bytes = sample_path.read_bytes()
+    else:
+        # `video_file` is a Streamlit UploadedFile here (the upload branch).
+        video_name = video_file.name
+        video_bytes = video_file.getvalue()
+
     with right:
         with st.status("Filing claim…", expanded=True) as status:
             try:
-                st.write(f"📤 Uploading **{video_file.name}** to VSS…")
-                video_id = upload_video_to_vss(video_file.name, video_file.getvalue())
-                st.success(f"video_id = `{video_id}`")
+                st.write(f"🔍 Checking VSS for **{video_name}**…")
+                video_id, source = upload_video_to_vss_cached(
+                    video_name, video_bytes
+                )
+                if source == "session-cache":
+                    st.success(
+                        f"♻️ Reusing prior upload (session cache): "
+                        f"video_id = `{video_id}`"
+                    )
+                elif source == "vss-name-match":
+                    st.success(
+                        f"♻️ Found existing video in VSS by filename: "
+                        f"video_id = `{video_id}`"
+                    )
+                else:
+                    st.success(f"📤 Uploaded fresh — video_id = `{video_id}`")
 
                 prompt = (
                     f"A customer just submitted a damage video. "

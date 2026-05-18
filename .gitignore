@@ -42,7 +42,12 @@ package-lock.json
 ~$*
 
 # --- Claude Code local settings (per-machine permission allowlist) ------
-.claude/
+# Ignore everything in .claude/ EXCEPT shareable team artifacts (commands,
+# agents, etc.) — those live under .claude/commands/ and .claude/agents/ and
+# should be committed so colleagues using Claude Code on this repo get them.
+.claude/*
+!.claude/commands/
+!.claude/agents/
 
 # --- Backup / temp files left by sed --bak, etc. ------------------------
 *.bak

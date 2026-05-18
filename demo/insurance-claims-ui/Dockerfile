@@ -1,0 +1,34 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install Python deps first for layer caching
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# App source
+COPY app.py policies.json ./
+
+# Bundled sample videos that the UI offers as a one-click "use bundled
+# sample" alternative to uploading (per the `sample_video` field in
+# policies.json). 15-30MB per file; bakes them into the image so the demo
+# works offline / out of the box.
+COPY sample-videos/ ./sample-videos/
+
+# Streamlit writes regenerated claim PDFs here (ephemeral in the container)
+RUN mkdir -p output
+
+# Container Apps ingress fronts whatever port we listen on; we use 80 so the
+# initial placeholder revision (helloworld:80) and the real Streamlit image
+# share the same targetPort, avoiding revision probe failures on first deploy.
+EXPOSE 80
+
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:80/_stcore/health').read()" || exit 1
+
+# --server.headless=true disables Streamlit's first-run usage prompt
+CMD ["streamlit", "run", "app.py", \
+     "--server.port=80", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true", \
+     "--browser.gatherUsageStats=false"]
