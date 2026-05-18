@@ -1,0 +1,50 @@
+# --- Project-specific exclusions ----------------------------------------
+# Upstream NVIDIA VSS repo — users clone separately per the workshop README
+video-search-and-summarization/
+
+# Local data (videos, secrets) — NOT for the public repo
+data/
+alex.md
+
+# azd environment state (subscription IDs, App Insights connection strings,
+# per-machine resource names — let users run `azd init` / `azd provision`
+# themselves and generate their own .azure/<env>/.env)
+.azure/
+
+# Generated claim PDFs from demo runs
+demo/insurance-claims/output/
+demo/insurance-claims-ui/output/
+demo/insurance-claims-foundry/src/*/output/
+output/
+
+# --- Python -------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# --- Node ---------------------------------------------------------------
+node_modules/
+package-lock.json
+
+# --- Streamlit / Foundry tool caches ------------------------------------
+.streamlit/
+.foundry/
+
+# --- IDE / OS -----------------------------------------------------------
+.DS_Store
+.vscode/
+.idea/
+
+# --- Office lock / temp files -------------------------------------------
+~$*
+
+# --- Claude Code local settings (per-machine permission allowlist) ------
+.claude/
+
+# --- Backup / temp files left by sed --bak, etc. ------------------------
+*.bak
+*.tmp
+*.swp
