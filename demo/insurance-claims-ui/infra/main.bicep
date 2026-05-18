@@ -31,6 +31,9 @@ param vssBaseUrl string = 'http://vss.104.45.71.11.nip.io'
 @description('Foundry hosted-agent responses endpoint (Bearer auth)')
 param foundryAgentEndpoint string
 
+@description('Start the UI in OFFLINE mode (replay canned fixtures, no VSS / Foundry calls). Useful for a parallel ACA deployment that can serve demos while the AKS GPU cluster is shut down.')
+param offlineMode bool = false
+
 @description('Resource group of the existing Foundry account to grant the UI identity invoke rights on')
 param foundryResourceGroupName string
 
@@ -76,6 +79,7 @@ module resources 'modules/resources.bicep' = {
     resourceToken: resourceToken
     vssBaseUrl: vssBaseUrl
     foundryAgentEndpoint: foundryAgentEndpoint
+    offlineMode: offlineMode
     containerCpu: containerCpu
     containerMemory: containerMemory
     minReplicas: minReplicas

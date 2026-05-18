@@ -26,6 +26,7 @@ import io
 import json
 import os
 import re
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,6 +44,17 @@ HERE = Path(__file__).parent
 POLICIES_PATH = HERE / "policies.json"
 OUTPUT_DIR = HERE / "output"
 OUTPUT_DIR.mkdir(exist_ok=True)
+FIXTURES_DIR = HERE / "fixtures"
+
+# Offline mode default — env-controlled so a parallel ACA deployment can boot
+# straight into offline (when the live VSS AKS cluster is shut down to save
+# GPU costs). Falsy by default; "1", "true", "yes" turn it on.
+DEFAULT_OFFLINE_MODE = os.environ.get("OFFLINE_MODE", "").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+    "on",
+)
 
 DEFAULT_VSS_BASE_URL = os.environ.get(
     "VSS_BASE_URL", "http://vss.104.45.71.11.nip.io"
@@ -124,6 +136,22 @@ def _vss_video_exists(video_id: str, timeout: float = 10.0) -> bool:
             if (clip.get("metadata") or {}).get("streamName") == video_id:
                 return True
     return False
+
+
+def load_fixture(policy_number: str) -> dict | None:
+    """Load the canned agent response for a policy, or None if absent.
+
+    Fixtures are produced by scripts/capture_fixtures.py against the real
+    deployed Foundry agent and committed to the repo so offline mode (the
+    AKS-GPU-cluster-is-down demo path) can replay them.
+    """
+    path = FIXTURES_DIR / f"{policy_number}.json"
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except json.JSONDecodeError:
+        return None
 
 
 def upload_video_to_vss_cached(filename: str, video_bytes: bytes) -> tuple[str, str]:
@@ -401,12 +429,24 @@ if "vss_base_url" not in st.session_state:
     st.session_state.vss_base_url = DEFAULT_VSS_BASE_URL
 if "foundry_endpoint" not in st.session_state:
     st.session_state.foundry_endpoint = DEFAULT_FOUNDRY_ENDPOINT
+if "offline_mode" not in st.session_state:
+    st.session_state.offline_mode = DEFAULT_OFFLINE_MODE
 
 
 def _clear_upload_cache() -> None:
     """Re-pointing VSS invalidates cached video_ids — they belong to the old host."""
     st.session_state["vss_uploads"] = {}
 
+
+# Persistent OFFLINE badge in the page header when active — makes it obvious
+# at-a-glance that we're replaying canned responses, not calling live VSS /
+# Foundry. Cheap visual cue for demos.
+if st.session_state.offline_mode:
+    st.warning(
+        "🧪 **OFFLINE MODE** — VSS upload and Foundry agent calls are mocked. "
+        "Responses are replayed from cached fixtures under `fixtures/`.",
+        icon="🧪",
+    )
 
 with st.expander("⚙️ Service endpoints", expanded=False):
     st.caption(
@@ -415,10 +455,22 @@ with st.expander("⚙️ Service endpoints", expanded=False):
         "only. Re-set the VSS URL to clear any cached video uploads from the "
         "previous deployment."
     )
+    st.checkbox(
+        "🧪 Offline mode — replay canned fixtures, no VSS, no Foundry",
+        key="offline_mode",
+        help=(
+            "When on: skip the VSS upload + the Foundry agent call entirely. "
+            "Show the canned response for whichever policy is selected, with "
+            "simulated 'thinking' delays. Useful for demos when the AKS GPU "
+            "cluster is shut down to save cost. Only policies with bundled "
+            "videos AND a fixture under fixtures/ are usable in this mode."
+        ),
+    )
     st.text_input(
         "VSS Base URL",
         key="vss_base_url",
         on_change=_clear_upload_cache,
+        disabled=st.session_state.offline_mode,
         help=(
             "Base URL of your NVIDIA VSS Agent deployment "
             "(e.g. http://vss.<EXTERNAL_HOST>.nip.io). No trailing slash needed."
@@ -427,6 +479,7 @@ with st.expander("⚙️ Service endpoints", expanded=False):
     st.text_input(
         "Foundry Hosted-Agent Endpoint",
         key="foundry_endpoint",
+        disabled=st.session_state.offline_mode,
         help=(
             "Full /endpoint/protocols/openai/responses URL of the hosted "
             "Foundry agent. Bearer auth via DefaultAzureCredential."
@@ -475,8 +528,35 @@ with left:
         if candidate.is_file():
             sample_path = candidate
 
+    # In OFFLINE mode the only path that produces meaningful output is the
+    # bundled-sample + fixture combo, so we hide the upload option entirely.
+    # A policy with no bundled video / no fixture surfaces a clear message
+    # instead of the upload widget — pushes the rep toward a policy that works.
+    offline = bool(st.session_state.offline_mode)
+    fixture = load_fixture(selected["policy_number"]) if offline else None
+
     video_choice = "upload"  # default when no bundled sample exists
-    if sample_path is not None:
+    if offline:
+        if sample_path is not None and fixture is not None:
+            video_choice = "bundled"
+            st.info(
+                f"🧪 Offline mode — will replay canned response for "
+                f"`{selected['policy_number']}` "
+                f"(fixture captured {fixture.get('captured_at', 'unknown')[:10]}).",
+                icon="🧪",
+            )
+        else:
+            video_choice = "blocked"
+            missing = (
+                "no bundled video" if sample_path is None
+                else f"no fixture at fixtures/{selected['policy_number']}.json"
+            )
+            st.warning(
+                f"This policy can't be demoed in offline mode ({missing}). "
+                "Pick a policy with a bundled video, or turn off offline mode "
+                "in ⚙️ Settings."
+            )
+    elif sample_path is not None:
         video_choice = st.radio(
             "Damage video",
             options=["bundled", "upload"],
@@ -509,9 +589,12 @@ with left:
         with st.expander("📺 Preview", expanded=True):
             st.video(preview_source)
 
-    # Submit is enabled if either the bundled sample is selected or a file
-    # has been uploaded.
-    have_video = (video_choice == "bundled") or (video_file is not None)
+    # Submit is enabled if either the bundled sample is selected (in offline
+    # mode this requires a fixture too) or a file has been uploaded.
+    have_video = (
+        (video_choice == "bundled" and (not offline or fixture is not None))
+        or (video_file is not None)
+    )
     submit = st.button(
         "Submit claim ↗",
         type="primary",
@@ -538,37 +621,65 @@ if submit and have_video:
     with right:
         with st.status("Filing claim…", expanded=True) as status:
             try:
-                st.write(f"🔍 Checking VSS for **{video_name}**…")
-                video_id, source = upload_video_to_vss_cached(
-                    video_name, video_bytes
-                )
-                if source == "session-cache":
+                if offline and fixture is not None:
+                    # --- OFFLINE BRANCH ---------------------------------
+                    # Skip both upstream calls. Replay the canned response
+                    # from the fixture with simulated delays so the UX flow
+                    # still feels like a real submission (~5-7s total).
+                    st.write(
+                        f"🧪 **Offline mode** — replaying canned response for "
+                        f"`{selected['policy_number']}`."
+                    )
+                    st.write(f"🔍 Checking VSS for **{video_name}**…")
+                    time.sleep(1.5)
+                    video_id = fixture["video_id"]
                     st.success(
-                        f"♻️ Reusing prior upload (session cache): "
+                        f"♻️ (simulated) Found existing video in VSS: "
                         f"video_id = `{video_id}`"
                     )
-                elif source == "vss-name-match":
-                    st.success(
-                        f"♻️ Found existing video in VSS by filename: "
-                        f"video_id = `{video_id}`"
-                    )
+                    prompt = fixture["prompt"]
+                    st.write("🤖 Sending this prompt to the Foundry agent:")
+                    st.code(prompt, language="text")
+                    with st.spinner(
+                        "Agent thinking (simulated — real run takes ~30-60s)…"
+                    ):
+                        time.sleep(5.0)
+                    agent_text = fixture["agent_text"]
+                    raw_resp = fixture.get("raw_response", {})
+                    st.write("✅ Agent finished (canned). Parsing reply…")
                 else:
-                    st.success(f"📤 Uploaded fresh — video_id = `{video_id}`")
+                    # --- LIVE BRANCH ------------------------------------
+                    st.write(f"🔍 Checking VSS for **{video_name}**…")
+                    video_id, source = upload_video_to_vss_cached(
+                        video_name, video_bytes
+                    )
+                    if source == "session-cache":
+                        st.success(
+                            f"♻️ Reusing prior upload (session cache): "
+                            f"video_id = `{video_id}`"
+                        )
+                    elif source == "vss-name-match":
+                        st.success(
+                            f"♻️ Found existing video in VSS by filename: "
+                            f"video_id = `{video_id}`"
+                        )
+                    else:
+                        st.success(f"📤 Uploaded fresh — video_id = `{video_id}`")
 
-                prompt = (
-                    f"A customer just submitted a damage video. "
-                    f"video_id={video_id}. "
-                    f"If the VIN is not visible, use policy "
-                    f"{selected['policy_number']} as a fallback. "
-                    f"Run the triage workflow."
-                )
-                st.write("🤖 Sending this prompt to the Foundry agent:")
-                st.code(prompt, language="text")
-                with st.spinner("Agent thinking (VSS analysis dominates ~30-60s)…"):
-                    raw_resp = call_foundry_agent(prompt)
+                    prompt = (
+                        f"A customer just submitted a damage video. "
+                        f"video_id={video_id}. "
+                        f"If the VIN is not visible, use policy "
+                        f"{selected['policy_number']} as a fallback. "
+                        f"Run the triage workflow."
+                    )
+                    st.write("🤖 Sending this prompt to the Foundry agent:")
+                    st.code(prompt, language="text")
+                    with st.spinner("Agent thinking (VSS analysis dominates ~30-60s)…"):
+                        raw_resp = call_foundry_agent(prompt)
 
-                agent_text = extract_agent_text(raw_resp)
-                st.write("✅ Agent finished. Parsing reply…")
+                    agent_text = extract_agent_text(raw_resp)
+                    st.write("✅ Agent finished. Parsing reply…")
 
                 claim = parse_agent_summary(agent_text, selected)
 

@@ -23,6 +23,9 @@ param resourceToken string
 param vssBaseUrl string
 param foundryAgentEndpoint string
 
+@description('Start the UI in OFFLINE mode (replay canned fixtures, no VSS / Foundry calls).')
+param offlineMode bool = false
+
 param containerCpu string
 param containerMemory string
 param minReplicas int
@@ -164,6 +167,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'VSS_BASE_URL', value: vssBaseUrl }
             { name: 'FOUNDRY_AGENT_ENDPOINT', value: foundryAgentEndpoint }
             { name: 'STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION', value: 'false' }
+            // Boot directly into offline mode when true. Lets a parallel ACA
+            // deployment serve demos while the AKS GPU cluster (cosmos VLM)
+            // is shut down to save cost. Reps can still toggle via Settings.
+            { name: 'OFFLINE_MODE', value: offlineMode ? 'true' : 'false' }
             // DefaultAzureCredential needs to know WHICH managed identity to
             // request a token for when there's no system-assigned MI. With a
             // user-assigned MI only, the SDK can't auto-discover — setting

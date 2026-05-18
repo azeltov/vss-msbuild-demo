@@ -19,6 +19,9 @@
     },
     "foundryAccountName": {
       "value": "${FOUNDRY_ACCOUNT_NAME}"
+    },
+    "offlineMode": {
+      "value": "${OFFLINE_MODE=false}"
     }
   }
 }
