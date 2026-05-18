@@ -33,6 +33,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -46,6 +47,17 @@ _AGENT_THINK_RE = re.compile(r"<agent-think\b.*?</agent-think>", flags=re.DOTALL
 
 VSS_BASE_URL = os.environ.get("VSS_BASE_URL", "http://vss.104.45.71.11.nip.io").rstrip("/")
 HTTP_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=300.0, pool=10.0)
+
+# Mock-VSS mode — when on, vss_analyze_video returns canned prose from
+# fixtures/vss/<video_id>.txt instead of calling the AKS cluster. Kept in
+# lockstep with the deployed Foundry agent's tools.py per CLAUDE.md.
+MOCK_VSS = os.environ.get("MOCK_VSS", "").strip().lower() in ("1", "true", "yes", "on")
+_VSS_FIXTURES_DIR = Path(__file__).parent / "fixtures" / "vss"
+_MOCK_VSS_FALLBACK = (
+    "The video '{video_id}' shows minor cosmetic damage: a small dent on "
+    "the front bumper and surface scratches on the driver door. No visible "
+    "VIN. Severity: minor."
+)
 
 mcp = FastMCP("vss-insurance-claims")
 
@@ -94,7 +106,18 @@ def vss_analyze_video(video_id: str, question: str) -> str:
     Returns:
         The final answer text from the VSS agent (after aggregating the SSE
         stream from /chat/stream).
+
+    When MOCK_VSS=true is set in the environment, this function returns a
+    canned response from fixtures/vss/<video_id>.txt (or a generic
+    "minor damage" fallback for unknown video_ids) without hitting the
+    network — lets local_runner.py demos run while AKS is shut down.
     """
+    if MOCK_VSS:
+        fixture = _VSS_FIXTURES_DIR / f"{video_id}.txt"
+        if fixture.is_file():
+            return fixture.read_text().strip()
+        return _MOCK_VSS_FALLBACK.format(video_id=video_id)
+
     prompt = f"Video reference: '{video_id}'.\n\n{question}"
     payload = {"messages": [{"role": "user", "content": prompt}]}
 

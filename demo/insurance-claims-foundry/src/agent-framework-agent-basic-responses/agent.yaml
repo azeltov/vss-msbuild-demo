@@ -24,3 +24,10 @@ environment_variables:
       value: gpt-4.1
     - name: VSS_BASE_URL
       value: http://vss.104.45.71.11.nip.io
+    # MOCK_VSS=true makes tools.vss_analyze_video() return canned prose from
+    # fixtures/vss/<video_id>.txt instead of calling the AKS cluster. Flip
+    # this to "true" + `azd deploy` to roll a revision that survives an
+    # AKS-down state. The agent still calls gpt-4.1 (so LLM tokens cost), but
+    # the GPU cluster can be stopped for cost savings.
+    - name: MOCK_VSS
+      value: "false"

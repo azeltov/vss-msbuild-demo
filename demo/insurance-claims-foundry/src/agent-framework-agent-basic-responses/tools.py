@@ -33,9 +33,26 @@ from pydantic import Field
 VSS_BASE_URL = os.environ.get("VSS_BASE_URL", "http://vss.104.45.71.11.nip.io").rstrip("/")
 HTTP_TIMEOUT = httpx.Timeout(connect=10.0, read=300.0, write=300.0, pool=10.0)
 
+# Mock-VSS mode (env-controlled). When on, vss_analyze_video() returns canned
+# damage prose from fixtures/vss/<video_id>.txt instead of calling AKS. Lets
+# the agent run end-to-end (still costs LLM tokens for the orchestration)
+# while the GPU cluster is shut down to save cost. Re-capture fixtures with
+# scripts/capture_vss_fixtures.py when VSS itself changes materially.
+MOCK_VSS = os.environ.get("MOCK_VSS", "").strip().lower() in ("1", "true", "yes", "on")
+
 _HERE = Path(__file__).parent
 _POLICIES_PATH = _HERE / "sample_data" / "policies.json"
 _OUTPUT_DIR = _HERE / "output"
+_VSS_FIXTURES_DIR = _HERE / "fixtures" / "vss"
+
+# Fallback prose returned when MOCK_VSS=true but the requested video_id has
+# no captured fixture. Generic enough that the downstream orchestration
+# (estimate_repair_cost, draft_claim_pdf) still produces a valid claim.
+_MOCK_VSS_FALLBACK = (
+    "The video '{video_id}' shows minor cosmetic damage: a small dent on "
+    "the front bumper and surface scratches on the driver door. No visible "
+    "VIN. Severity: minor."
+)
 
 # VSS's LVS chat agent wraps its planning + tool traces in <agent-think>
 # blocks. The actual user-facing answer comes AFTER the closing tag. Strip.
@@ -68,7 +85,18 @@ def vss_analyze_video(
 
     Returns prose. The wrapper strips VSS's internal chain-of-thought tags
     (`<agent-think>`) before returning, so callers see only the final answer.
+
+    When MOCK_VSS=true, skips the network call entirely and returns a canned
+    response from fixtures/vss/<video_id>.txt (falls back to a generic
+    "minor damage" string for unknown video_ids). Lets the agent run while
+    the AKS GPU cluster is shut down for cost savings.
     """
+    if MOCK_VSS:
+        fixture = _VSS_FIXTURES_DIR / f"{video_id}.txt"
+        if fixture.is_file():
+            return fixture.read_text().strip()
+        return _MOCK_VSS_FALLBACK.format(video_id=video_id)
+
     prompt = f"Video reference: '{video_id}'.\n\n{question}"
     payload = {"messages": [{"role": "user", "content": prompt}]}
     final_chunks: list[str] = []
