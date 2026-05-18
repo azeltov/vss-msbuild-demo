@@ -20,7 +20,7 @@ resources:
     cpu: "0.25"
     memory: 0.5Gi
 environment_variables:
-    - name: AZURE_AI_MODEL_DEPLOYMENT_NAME
+    - name: AZURE_OPENAI_DEPLOYMENT
       value: gpt-4.1
     - name: VSS_BASE_URL
       value: http://vss.104.45.71.11.nip.io

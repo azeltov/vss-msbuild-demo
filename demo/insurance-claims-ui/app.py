@@ -428,6 +428,9 @@ if submit and video_file:
                 "affected panel."
             )
 
+        st.markdown("### Prompt sent to agent")
+        st.code(prompt, language="text")
+
         st.markdown("### Agent reply")
         st.code(agent_text, language="text")
 

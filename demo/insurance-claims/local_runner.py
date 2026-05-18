@@ -1,7 +1,7 @@
 """Local smoke test for the Insurance Claims demo — no Foundry deploy required.
 
 Drives the same agent loop as the Foundry hosted-agent.yaml does, but using
-the Azure OpenAI SDK locally against your Foundry project's gpt-5.4
+the Azure OpenAI SDK locally against your Foundry project's chat-model
 deployment. Useful for iterating on the system prompt and tool contracts
 before paying for Foundry container deployment cycles.
 
@@ -17,12 +17,9 @@ Run:
 The runner:
   1. Uploads the video file directly to VST (skipping MCP for the byte
      transfer — MCP is great for tool calls, not 50MB binary uploads).
-  2. Invokes gpt-5.4 (your Foundry deployment) with the same system prompt
+  2. Invokes your Azure OpenAI deployment with the same system prompt
      + function tools as the Foundry hosted agent.
   3. Prints the conversation and final claim summary.
-
-If you want to use public OpenAI (api.openai.com) instead of Azure, set
-USE_PUBLIC_OPENAI=1 and OPENAI_API_KEY in the env.
 """
 
 from __future__ import annotations
@@ -40,45 +37,35 @@ from vss_mcp_server import vss_analyze_video, vss_upload_video
 HERE = Path(__file__).parent
 INSTRUCTIONS = (HERE / "agent_instructions.md").read_text()
 
-# All deployment-specific config comes from env vars so the repo doesn't
-# pin a specific Azure subscription / Foundry project.
+# All deployment-specific config comes from env vars (read at call time, not
+# import time, so the module stays importable by test harnesses).
 #   VSS_BASE_URL              http(s) base URL of your VSS AKS deployment
 #   AZURE_OPENAI_ENDPOINT     https://<account>.cognitiveservices.azure.com/
 #   AZURE_OPENAI_DEPLOYMENT   name of your chat-model deployment (e.g. gpt-4.1)
 #   AZURE_OPENAI_API_KEY      optional — if unset, DefaultAzureCredential is used
-#   USE_PUBLIC_OPENAI=1       to swap to public OpenAI (api.openai.com)
-VSS_BASE_URL = os.environ.get("VSS_BASE_URL", "").rstrip("/")
-AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
-AZURE_OPENAI_DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "")
-USE_PUBLIC_OPENAI = os.environ.get("USE_PUBLIC_OPENAI", "").lower() in ("1", "true", "yes")
 
-if not VSS_BASE_URL:
-    raise SystemExit("Set VSS_BASE_URL (e.g. http://vss.<EXTERNAL_HOST>.nip.io)")
-if not USE_PUBLIC_OPENAI and (not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
-    raise SystemExit(
-        "Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT "
-        "(or USE_PUBLIC_OPENAI=1 + OPENAI_API_KEY + OPENAI_MODEL)."
-    )
+
+def _require_env() -> tuple[str, str, str]:
+    """Read + validate required env vars. Returns (vss, endpoint, deployment)."""
+    vss = os.environ.get("VSS_BASE_URL", "").rstrip("/")
+    endpoint = os.environ.get("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
+    deployment = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "")
+    if not vss:
+        raise SystemExit("Set VSS_BASE_URL (e.g. http://vss.<EXTERNAL_HOST>.nip.io)")
+    if not endpoint or not deployment:
+        raise SystemExit("Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT.")
+    return vss, endpoint, deployment
 
 
 def make_client():
-    """Build an OpenAI-compatible client.
-
-    Defaults to Azure OpenAI against the gpt-5.4 deployment in the Foundry
-    project's AI Services account. Falls back to public OpenAI if
-    USE_PUBLIC_OPENAI=1.
-    """
-    if USE_PUBLIC_OPENAI:
-        from openai import OpenAI
-
-        return OpenAI(), os.environ.get("OPENAI_MODEL", "gpt-4.1")
-
+    """Build an Azure OpenAI client against the configured deployment."""
     from openai import AzureOpenAI
 
+    _, endpoint, deployment = _require_env()
     api_key = os.environ.get("AZURE_OPENAI_API_KEY")
     if api_key:
         client = AzureOpenAI(
-            azure_endpoint=AZURE_OPENAI_ENDPOINT,
+            azure_endpoint=endpoint,
             api_version="2024-12-01-preview",
             api_key=api_key,
         )
@@ -91,11 +78,11 @@ def make_client():
             "https://cognitiveservices.azure.com/.default",
         )
         client = AzureOpenAI(
-            azure_endpoint=AZURE_OPENAI_ENDPOINT,
+            azure_endpoint=endpoint,
             api_version="2024-12-01-preview",
             azure_ad_token_provider=token_provider,
         )
-    return client, AZURE_OPENAI_DEPLOYMENT
+    return client, deployment
 
 
 def upload_video_bytes(video_path: Path) -> str:
@@ -217,7 +204,12 @@ def dispatch(name: str, args: dict) -> dict:
     raise ValueError(f"Unknown tool: {name}")
 
 
-def run(video_path: Path, policy_fallback: str | None = None) -> None:
+def run(video_path: Path, policy_fallback: str | None = None) -> list[dict]:
+    """Drive the full claims-triage agent loop against `video_path`.
+
+    Returns the final message history so callers (test harnesses, eval
+    drivers) can introspect which tools the agent invoked.
+    """
     client, model = make_client()
     video_id = upload_video_bytes(video_path)
 
@@ -296,6 +288,7 @@ def run(video_path: Path, policy_fallback: str | None = None) -> None:
         print("\n[!] Hit 25-turn cap — agent didn't reach a final answer.")
 
     print("\n=== Agent finished ===")
+    return messages
 
 
 if __name__ == "__main__":

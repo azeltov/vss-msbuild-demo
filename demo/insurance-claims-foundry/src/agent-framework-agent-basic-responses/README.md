@@ -19,6 +19,48 @@ Then replies with a concise claim summary including the payable amount after ded
 
 See [tools.py](tools.py) for tool implementations and [instructions.md](instructions.md) for the system prompt.
 
+## Iterate locally — no `azd deploy` required
+
+Once your Foundry project is provisioned (one-time `azd provision`, see step 4
+below), the iterative dev loop runs **the agent process on your laptop** while
+the model inference still uses Foundry. No container build, no ACR push, no
+hosted endpoint — just `python main.py` under the covers, exposed as
+`localhost:8088`.
+
+```bash
+cd demo/insurance-claims-foundry
+
+# Terminal 1 — start the agent (binds :8088, leave running)
+azd ai agent run
+
+# Terminal 2 — invoke with the canonical smoke-test prompt
+azd ai agent invoke --local \
+  "A customer just submitted a damage video. video_id=302857. \
+   If the VIN is not visible, use policy POL-2025-44912 as a fallback. \
+   Run the triage workflow."
+```
+
+Verified end-to-end output (Pexels clip 302857 — wrecked Camry):
+
+```
+Claim drafted: CLM-YYYYMMDD-44912
+Vehicle: 2022 Toyota Camry SE (VIN 4T1G11AK7NU012345)
+Damage:  Severe damage to hood and windshield;
+         moderate damage to front bumper and driver door.
+Repair:  $5982    Deductible: $500    Payable: $5482
+Draft saved to: ./output/CLM-YYYYMMDD-44912.pdf
+```
+
+`azd ai agent run` reads env vars from `.azure/<env>/.env` (populated by
+`azd provision`) and from [agent.yaml](agent.yaml)'s `environment_variables`
+block (which carries `AZURE_OPENAI_DEPLOYMENT` and `VSS_BASE_URL`). It also
+auto-maps `AZURE_AI_PROJECT_ENDPOINT` → `FOUNDRY_PROJECT_ENDPOINT`.
+
+When you're ready to publish the agent to Foundry as a real hosted container,
+see [Deploying to Foundry (production hosted)](#deploying-to-foundry-production-hosted)
+below. The full walk-through (install extension → provision → upgrade
+model → local run) is in [Reproduce the local run](#reproduce-the-local-run).
+
 ## Prerequisites
 
 | Requirement | Why |
@@ -93,14 +135,14 @@ az cognitiveservices account deployment create \
 Then point the agent at it:
 
 ```bash
-# Edit agent.yaml: AZURE_AI_MODEL_DEPLOYMENT_NAME value: gpt-4.1
-# Edit .azure/<env>/.env: AZURE_AI_MODEL_DEPLOYMENT_NAME="gpt-4.1"
+# Edit agent.yaml: AZURE_OPENAI_DEPLOYMENT value: gpt-4.1
+# Edit .azure/<env>/.env: AZURE_OPENAI_DEPLOYMENT="gpt-4.1"
 ```
 
 Or run from this directory:
 
 ```bash
-azd env set AZURE_AI_MODEL_DEPLOYMENT_NAME gpt-4.1
+azd env set AZURE_OPENAI_DEPLOYMENT gpt-4.1
 sed -i.bak 's/value: gpt-4.1-mini/value: gpt-4.1/' agent.yaml && rm agent.yaml.bak
 ```
 
@@ -181,6 +223,49 @@ curl -X PUT "<presigned-url>" --data-binary @my-claim.mp4 -H "Content-Type: vide
 | `DefaultAzureCredential` failure | Run `azd auth logout && azd auth login` and `az login` again. |
 | VSS analysis returns prose with `<agent-think>` tags | Wrapper should strip them — see [tools.py](tools.py) `_AGENT_THINK_RE`. If you see them in output, check that regex is being applied. |
 | `ResourceNotFound` on `FOUNDRY_PROJECT_ENDPOINT` | `azd ai agent run` should auto-map `AZURE_AI_PROJECT_ENDPOINT` → `FOUNDRY_PROJECT_ENDPOINT`. If not, `cp .env.example .env` and set both manually. |
+
+## Test harness — deployed agent
+
+End-to-end smoke test under [../../tests/](../../tests/) that drives the
+**deployed** Foundry hosted agent (no `--local`). It shells out to
+`azd ai agent invoke --new-conversation "..."` and asserts that the
+response includes a drafted claim with the expected vehicle / VIN / dollar
+amount.
+
+### Enable
+
+Test config lives in the repo-root [.env.test](../../../../.env.test).
+Set the remote-suite gate:
+
+```bash
+RUN_E2E_REMOTE_TESTS=1
+```
+
+(see [.env.test.example](../../../../.env.test.example) for the full
+template). The local-runner gate `RUN_E2E_TESTS` for the sibling
+`insurance-claims/` demo is independent — you can enable one suite without
+the other.
+
+### Run
+
+```bash
+cd demo/insurance-claims-foundry
+pip install -r requirements-dev.txt    # pytest + python-dotenv
+pytest tests/ -v -s
+```
+
+### Skip behavior
+
+Plain `pytest tests/` is safe — the test is skipped when any of these are true:
+
+- `RUN_E2E_REMOTE_TESTS` is unset
+- `azd` CLI isn't on PATH
+- No deployed agent in the current azd env (run `azd deploy` first)
+
+Each run costs ~30-90s of model + VSS spend, so the gate stays off by
+default. See the App Insights trace (linked from invoke output) for the
+full tool-call sequence — `azd ai agent invoke` stdout only carries the
+final response text, not individual tool calls.
 
 ## Deploying to Foundry (production hosted)
 

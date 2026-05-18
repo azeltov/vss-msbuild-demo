@@ -36,7 +36,7 @@ rationale.
   - `AZURE_OPENAI_DEPLOYMENT` — e.g. `gpt-4.1`
   - `AZURE_OPENAI_API_KEY` *(optional)* — if unset, `az login` + `DefaultAzureCredential` is used
 
-## Quick start — smoke test locally (uses Azure OpenAI `gpt-5.4`)
+## Quick start — smoke test locally (uses Azure OpenAI)
 
 ```bash
 cd demo/insurance-claims
@@ -64,9 +64,52 @@ python local_runner.py path/to/damage.mp4
 The runner prints the agent's reasoning trace, every tool call, and the final
 draft-claim summary. A PDF (or .txt fallback) is written to `./output/`.
 
-> **Want to use public OpenAI** (api.openai.com) instead? Set
-> `USE_PUBLIC_OPENAI=1`, `OPENAI_API_KEY=...`, and `OPENAI_MODEL=gpt-4o`
-> (or any other tool-use-capable model).
+## Test harness
+
+End-to-end smoke test under [tests/](tests/) that drives `local_runner.py`
+against real VSS + real Azure OpenAI and asserts the agent calls all four
+expected tools (`vss_analyze_video`, `lookup_policy`, `estimate_repair_cost`,
+`draft_claim_pdf`) and produces a claim file.
+
+### Config layering
+
+`tests/conftest.py` loads two env files, in order:
+
+1. **`.env`** (repo root) — runtime config shared with `python local_runner.py`
+   (VSS, Azure OpenAI, Foundry endpoints).
+2. **`.env.test`** (repo root) — test-only knobs. **Wins over `.env`** for any
+   overlapping keys, so test-time overrides don't pollute runtime config.
+
+Both files are gitignored; commit the templates [.env.example](../../.env.example)
+and [.env.test.example](../../.env.test.example) instead.
+
+### Enable the E2E test
+
+```bash
+cp .env.test.example .env.test
+# edit .env.test to set TEST_VIDEO_PATH to a real video on disk
+```
+
+`.env.test` already has `RUN_E2E_TESTS=1` set, so the test runs as soon as
+the file exists with a valid `TEST_VIDEO_PATH`.
+
+### Run
+
+```bash
+cd demo/insurance-claims
+pip install -r requirements-dev.txt    # pytest + pytest-mock + python-dotenv
+pytest tests/ -v -s
+```
+
+### Skip behavior
+
+The test is **skipped** when any of the following are true (so plain
+`pytest` is always safe — no model spend by accident):
+
+- `RUN_E2E_TESTS` is unset (no `.env.test` or commented out)
+- `VSS_BASE_URL` / `AZURE_OPENAI_ENDPOINT` / `AZURE_OPENAI_DEPLOYMENT` missing
+- `TEST_VIDEO_PATH` is unset or the file doesn't exist
+- VSS endpoint isn't reachable
 
 ## Quick start — deploy to Foundry
 
