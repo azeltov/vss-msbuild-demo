@@ -48,3 +48,6 @@ package-lock.json
 *.bak
 *.tmp
 *.swp
+
+# Demo config files that may contain per-machine subscription / project IDs
+demo/**/foundry_config.json

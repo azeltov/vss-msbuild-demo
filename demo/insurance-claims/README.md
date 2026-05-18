@@ -21,7 +21,6 @@ rationale.
 | [tools.py](tools.py) | Mock Python tools — policy lookup, repair-cost estimator, claim-PDF writer |
 | [agent_instructions.md](agent_instructions.md) | System prompt for the master agent (Foundry-deployable as-is) |
 | [agent.yaml](agent.yaml) | Microsoft Foundry hosted-agent definition |
-| [foundry_config.json](foundry_config.json) | Subscription / RG / Foundry project IDs (`straive-newrp-project`, North Central US) |
 | [local_runner.py](local_runner.py) | Smoke-test harness using Anthropic SDK — no Foundry required |
 | [foundry_deploy.md](foundry_deploy.md) | Step-by-step Foundry deployment guide |
 | [sample_data/policies.json](sample_data/policies.json) | Three mock policies (one VIN match per supported demo video) |
@@ -32,28 +31,29 @@ rationale.
   `http://vss.<EXTERNAL_HOST>.nip.io/` from your shell — should return HTTP 200.
   (Setup steps for that live in [`../../README.md`](../../README.md).)
 - Python 3.11+
-- Azure OpenAI access in your Foundry project's AI Services account
-  (`straive-newrp-project-resource`) — the `gpt-5.4` deployment we'll use is
-  already provisioned per [foundry_config.json](foundry_config.json). Either
-  set `AZURE_OPENAI_API_KEY` or `az login` and the runner will pick up your
-  Entra credentials via `DefaultAzureCredential`.
+- Azure OpenAI access to a deployed chat model. Configure via env vars:
+  - `AZURE_OPENAI_ENDPOINT` — `https://<account>.cognitiveservices.azure.com/`
+  - `AZURE_OPENAI_DEPLOYMENT` — e.g. `gpt-4.1`
+  - `AZURE_OPENAI_API_KEY` *(optional)* — if unset, `az login` + `DefaultAzureCredential` is used
 
 ## Quick start — smoke test locally (uses Azure OpenAI `gpt-5.4`)
 
 ```bash
-cd /Users/azeltov/git/vss-claude/demo/insurance-claims
+cd demo/insurance-claims
 
 pip install -r requirements.txt
 
-export VSS_BASE_URL=http://vss.104.45.71.11.nip.io       # your AKS LB host
+# Required — point at your VSS deployment + your Azure OpenAI model
+export VSS_BASE_URL=http://vss.<EXTERNAL_HOST>.nip.io
+export AZURE_OPENAI_ENDPOINT=https://<account>.cognitiveservices.azure.com/
+export AZURE_OPENAI_DEPLOYMENT=gpt-4.1
 
 # Option A: API-key auth (simplest)
 export AZURE_OPENAI_API_KEY=$(az cognitiveservices account keys list \
-  -g rg-straive-newrp-project -n straive-newrp-project-resource \
-  --query key1 -o tsv)
+  -g <YOUR_RG> -n <YOUR_AI_SERVICES_ACCOUNT> --query key1 -o tsv)
 
-# Option B: Entra credentials — no env var, just `az login` first
-# (the runner falls back to DefaultAzureCredential when AZURE_OPENAI_API_KEY is unset)
+# Option B: Entra credentials — leave AZURE_OPENAI_API_KEY unset and just
+# `az login` first. The runner falls back to DefaultAzureCredential.
 
 # Use any short MP4 — a car damage walk-around is ideal. The VIN visible in
 # any frame should match a policy in sample_data/policies.json (use a sticker
@@ -65,9 +65,8 @@ The runner prints the agent's reasoning trace, every tool call, and the final
 draft-claim summary. A PDF (or .txt fallback) is written to `./output/`.
 
 > **Want to use public OpenAI** (api.openai.com) instead? Set
-> `USE_PUBLIC_OPENAI=1` and `OPENAI_API_KEY=...`. The runner switches
-> SDK clients automatically. Public OpenAI doesn't have a `gpt-5.4`
-> deployment though — set `OPENAI_MODEL=gpt-4o` or similar.
+> `USE_PUBLIC_OPENAI=1`, `OPENAI_API_KEY=...`, and `OPENAI_MODEL=gpt-4o`
+> (or any other tool-use-capable model).
 
 ## Quick start — deploy to Foundry
 

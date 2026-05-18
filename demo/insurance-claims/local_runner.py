@@ -39,10 +39,26 @@ from vss_mcp_server import vss_analyze_video, vss_upload_video
 
 HERE = Path(__file__).parent
 INSTRUCTIONS = (HERE / "agent_instructions.md").read_text()
-CFG = json.loads((HERE / "foundry_config.json").read_text())
 
-VSS_BASE_URL = os.environ.get("VSS_BASE_URL", CFG["vss_base_url"]).rstrip("/")
+# All deployment-specific config comes from env vars so the repo doesn't
+# pin a specific Azure subscription / Foundry project.
+#   VSS_BASE_URL              http(s) base URL of your VSS AKS deployment
+#   AZURE_OPENAI_ENDPOINT     https://<account>.cognitiveservices.azure.com/
+#   AZURE_OPENAI_DEPLOYMENT   name of your chat-model deployment (e.g. gpt-4.1)
+#   AZURE_OPENAI_API_KEY      optional — if unset, DefaultAzureCredential is used
+#   USE_PUBLIC_OPENAI=1       to swap to public OpenAI (api.openai.com)
+VSS_BASE_URL = os.environ.get("VSS_BASE_URL", "").rstrip("/")
+AZURE_OPENAI_ENDPOINT = os.environ.get("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
+AZURE_OPENAI_DEPLOYMENT = os.environ.get("AZURE_OPENAI_DEPLOYMENT", "")
 USE_PUBLIC_OPENAI = os.environ.get("USE_PUBLIC_OPENAI", "").lower() in ("1", "true", "yes")
+
+if not VSS_BASE_URL:
+    raise SystemExit("Set VSS_BASE_URL (e.g. http://vss.<EXTERNAL_HOST>.nip.io)")
+if not USE_PUBLIC_OPENAI and (not AZURE_OPENAI_ENDPOINT or not AZURE_OPENAI_DEPLOYMENT):
+    raise SystemExit(
+        "Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT "
+        "(or USE_PUBLIC_OPENAI=1 + OPENAI_API_KEY + OPENAI_MODEL)."
+    )
 
 
 def make_client():
@@ -55,14 +71,14 @@ def make_client():
     if USE_PUBLIC_OPENAI:
         from openai import OpenAI
 
-        return OpenAI(), os.environ.get("OPENAI_MODEL", "gpt-5.4")
+        return OpenAI(), os.environ.get("OPENAI_MODEL", "gpt-4.1")
 
     from openai import AzureOpenAI
 
     api_key = os.environ.get("AZURE_OPENAI_API_KEY")
     if api_key:
         client = AzureOpenAI(
-            azure_endpoint=CFG["aoai_endpoint"],
+            azure_endpoint=AZURE_OPENAI_ENDPOINT,
             api_version="2024-12-01-preview",
             api_key=api_key,
         )
@@ -75,11 +91,11 @@ def make_client():
             "https://cognitiveservices.azure.com/.default",
         )
         client = AzureOpenAI(
-            azure_endpoint=CFG["aoai_endpoint"],
+            azure_endpoint=AZURE_OPENAI_ENDPOINT,
             api_version="2024-12-01-preview",
             azure_ad_token_provider=token_provider,
         )
-    return client, CFG["model_deployment_name"]
+    return client, AZURE_OPENAI_DEPLOYMENT
 
 
 def upload_video_bytes(video_path: Path) -> str:

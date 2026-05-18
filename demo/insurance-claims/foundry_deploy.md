@@ -11,28 +11,20 @@ not the legacy ML hub/workspace shape).
 
 ## Your project at a glance
 
-All identifiers live in [foundry_config.json](foundry_config.json):
+Set these to your Foundry project's values (used by the Python snippets below):
 
-```json
-{
-  "subscription_id":      "7d5234cf-1437-4626-94d3-47372cdfc8f5",
-  "resource_group":       "rg-straive-newrp-project",
-  "location":             "northcentralus",
-  "account_name":         "straive-newrp-project-resource",
-  "project_name":         "straive-newrp-project",
-  "project_endpoint":     "https://straive-newrp-project-resource.services.ai.azure.com/api/projects/straive-newrp-project",
-  "model_deployment_name":"gpt-5.4",
-  "vss_base_url":         "http://vss.104.45.71.11.nip.io"
-}
+```bash
+export AZURE_SUBSCRIPTION_ID=<your-subscription-id>
+export AZURE_RESOURCE_GROUP=<your-rg>
+export AZURE_LOCATION=northcentralus
+export AZURE_AI_ACCOUNT_NAME=<your-ai-services-account>
+export AZURE_AI_PROJECT_NAME=<your-foundry-project>
+export FOUNDRY_PROJECT_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>
+export AZURE_OPENAI_DEPLOYMENT=gpt-4.1
+export VSS_BASE_URL=http://vss.<EXTERNAL_HOST>.nip.io
 ```
 
-| Aspect | Value |
-|---|---|
-| Foundry region | **North Central US** |
-| AKS / VSS region | West Europe |
-| Cross-region RTT | ~110 ms per VSS call (acceptable for a demo) |
-| Models deployed | `gpt-5.4` (1000 GS), `gpt-4.1` (50 GS), `text-embedding-ada-002` (120 Std) |
-| Agent Identity | Blueprint configured (supports Entra Agent ID, OBO, fmi_path token exchange) |
+> The newer end-to-end demo (with full `azd ai agent` workflow + Streamlit UI) lives in [../insurance-claims-foundry/](../insurance-claims-foundry/) — recommended path if you want a turnkey deploy script.
 
 ## Prerequisites
 
@@ -86,15 +78,12 @@ takes an `endpoint` (not separate `subscription_id`/`resource_group`/`project_na
 fields — those are for the legacy ML workspace shape).
 
 ```python
-import json
-from pathlib import Path
+import os
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 
-cfg = json.loads(Path("foundry_config.json").read_text())
-
 project = AIProjectClient(
-    endpoint=cfg["project_endpoint"],
+    endpoint=os.environ["FOUNDRY_PROJECT_ENDPOINT"],
     credential=DefaultAzureCredential(),
 )
 
@@ -102,7 +91,7 @@ with open("agent_instructions.md") as f:
     instructions = f.read()
 
 agent = project.agents.create_agent(
-    model=cfg["model_deployment_name"],     # "gpt-5.4"
+    model=os.environ["AZURE_OPENAI_DEPLOYMENT"],   # e.g. "gpt-4.1"
     name="insurance-claims-triage",
     description="Turns customer damage videos into draft claims.",
     instructions=instructions,
@@ -190,13 +179,14 @@ The `/azure:microsoft-foundry` skill scaffolds all of these.
 ```bash
 # Delete the agent (does not touch model deployments or the project)
 python -c "
-import json
-from pathlib import Path
+import os
 from azure.ai.projects import AIProjectClient
 from azure.identity import DefaultAzureCredential
 
-cfg = json.loads(Path('foundry_config.json').read_text())
-p = AIProjectClient(endpoint=cfg['project_endpoint'], credential=DefaultAzureCredential())
+p = AIProjectClient(
+    endpoint=os.environ['FOUNDRY_PROJECT_ENDPOINT'],
+    credential=DefaultAzureCredential(),
+)
 for a in p.agents.list_agents():
     if a.name == 'insurance-claims-triage':
         p.agents.delete_agent(a.id)
@@ -204,5 +194,5 @@ for a in p.agents.list_agents():
 "
 
 # Optional: delete the ACR repository
-az acr repository delete --name straivenewrpacr --repository insurance-claims --yes
+az acr repository delete --name <YOUR_ACR> --repository insurance-claims --yes
 ```
