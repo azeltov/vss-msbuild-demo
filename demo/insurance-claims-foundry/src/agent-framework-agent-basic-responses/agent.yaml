@@ -20,6 +20,15 @@ resources:
     cpu: "0.25"
     memory: 0.5Gi
 environment_variables:
+    # MODEL_BACKEND selects the chat client in main.py:
+    #   "foundry"  → FoundryChatClient (gpt-4.1 via FOUNDRY_PROJECT_ENDPOINT, AAD auth)
+    #   "nemotron" → OpenAIChatCompletionClient targeting a Nemotron NIM
+    #                deployment hosted on Foundry. Requires NEMOTRON_ENDPOINT_URL
+    #                and NEMOTRON_API_KEY — for hosted deploys, wire the key
+    #                through Foundry's secret store / Key Vault rather than
+    #                baking it into this file (it's committed to git).
+    - name: MODEL_BACKEND
+      value: foundry
     - name: AZURE_OPENAI_DEPLOYMENT
       value: gpt-4.1
     - name: VSS_BASE_URL
@@ -27,7 +36,7 @@ environment_variables:
     # MOCK_VSS=true makes tools.vss_analyze_video() return canned prose from
     # fixtures/vss/<video_id>.txt instead of calling the AKS cluster. Flip
     # this to "true" + `azd deploy` to roll a revision that survives an
-    # AKS-down state. The agent still calls gpt-4.1 (so LLM tokens cost), but
-    # the GPU cluster can be stopped for cost savings.
+    # AKS-down state. The agent still calls the LLM (so model tokens cost),
+    # but the GPU cluster can be stopped for cost savings.
     - name: MOCK_VSS
       value: "true"
