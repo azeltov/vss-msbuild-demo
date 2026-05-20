@@ -11,6 +11,7 @@ from pathlib import Path
 
 from agent_framework import Agent
 from agent_framework.foundry import FoundryChatClient
+from agent_framework.observability import enable_instrumentation
 from agent_framework.openai import OpenAIChatCompletionClient
 from agent_framework_foundry_hosting import ResponsesHostServer
 from azure.identity import DefaultAzureCredential
@@ -25,6 +26,23 @@ from tools import (
 
 # Load environment variables from .env file (when running locally)
 load_dotenv()
+
+
+def _setup_observability() -> None:
+    # Ship agent-framework GenAI spans/metrics (token usage, tool calls, run
+    # durations) to the App Insights instance backing this Foundry project so
+    # the agent's Monitor dashboard cards populate. The hosted runtime already
+    # injects APPLICATIONINSIGHTS_CONNECTION_STRING; for local `azd ai agent
+    # run` this is unset and we skip silently.
+    conn = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    if not conn:
+        return
+    try:
+        from azure.monitor.opentelemetry import configure_azure_monitor
+    except ImportError:
+        return
+    configure_azure_monitor(connection_string=conn)
+    enable_instrumentation()
 
 
 def _build_chat_client():
@@ -51,6 +69,7 @@ def _build_chat_client():
 
 
 def main():
+    _setup_observability()
     client = _build_chat_client()
 
     instructions = (Path(__file__).parent / "instructions.md").read_text()
