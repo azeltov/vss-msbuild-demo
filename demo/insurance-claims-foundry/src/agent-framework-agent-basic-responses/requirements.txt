@@ -5,3 +5,4 @@ pydantic>=2.0.0        # @tool decorator uses Field type annotations
 python-dotenv          # local .env loading
 reportlab>=4.0.0       # claim PDF generator (falls back to .txt if unavailable)
 azure-identity>=1.19.0 # DefaultAzureCredential
+azure-monitor-opentelemetry>=1.6.0  # exports agent-framework GenAI spans/metrics to App Insights for the Foundry Monitor dashboard
