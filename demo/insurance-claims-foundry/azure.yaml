@@ -26,6 +26,18 @@ services:
                     capacity: 50
                     name: Standard
             startupCommand: python main.py
+    insurance-claims-triage-vss:
+        project: src/agent-framework-agent-vss-responses
+        host: azure.ai.agent
+        language: docker
+        docker:
+            remoteBuild: true
+        config:
+            container:
+                resources:
+                    cpu: "0.25"
+                    memory: 0.5Gi
+            startupCommand: python main.py
 infra:
     provider: bicep
     path: ./infra

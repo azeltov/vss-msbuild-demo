@@ -16,7 +16,7 @@ Usage:
 Skip conditions (any one triggers a skip):
   - RUN_E2E_REMOTE_TESTS not set
   - `azd` binary not on PATH
-  - No azd project / no deployed agent (AGENT_INSURANCE_CLAIMS_TRIAGE_VERSION unset)
+  - No azd project / selected deployed agent version unset
 
 Cost / runtime: ~30-90s per invoke + a few cents of model spend.
 """
@@ -32,12 +32,14 @@ from pathlib import Path
 import pytest
 
 FOUNDRY_DIR = Path(__file__).resolve().parent.parent
+RUN_REMOTE_E2E = bool(os.environ.get("RUN_E2E_REMOTE_TESTS"))
+REMOTE_AGENT_NAME = os.environ.get("REMOTE_AGENT_NAME", "insurance-claims-triage-vss")
 
-# video_id 302857 (Pexels) is pre-uploaded to the workshop VSS deployment;
+# video_id toyota is pre-uploaded to the workshop VSS deployment;
 # its damage profile matches the Camry policy POL-2025-44912 in
 # sample_data/policies.json.
 SMOKE_PROMPT = (
-    "A customer just submitted a damage video. video_id=302857. "
+    "A customer just submitted a damage video. video_id=toyota. "
     "If the VIN is not visible, use policy POL-2025-44912 as a fallback. "
     "Run the triage workflow."
 )
@@ -45,8 +47,13 @@ EXPECTED_VEHICLE = "2022 Toyota Camry SE"
 EXPECTED_VIN = "4T1G11AK7NU012345"
 
 
-def _azd_env_has_deployed_agent() -> bool:
-    """True if `azd env get-values` reports a non-empty agent version."""
+def _agent_version_env_name(agent_name: str) -> str:
+    normalized = re.sub(r"\W+", "_", agent_name).upper().strip("_")
+    return f"AGENT_{normalized}_VERSION"
+
+
+def _azd_env_has_deployed_agent(agent_name: str) -> bool:
+    """True if `azd env get-values` reports a non-empty version for agent_name."""
     azd = shutil.which("azd")
     if azd is None:
         return False
@@ -62,12 +69,13 @@ def _azd_env_has_deployed_agent() -> bool:
         return False
     if out.returncode != 0:
         return False
-    return bool(re.search(r'AGENT_\w+_VERSION="?\d+', out.stdout))
+    version_var = _agent_version_env_name(agent_name)
+    return bool(re.search(rf'{re.escape(version_var)}="?\d+', out.stdout))
 
 
 pytestmark = [
     pytest.mark.skipif(
-        not os.environ.get("RUN_E2E_REMOTE_TESTS"),
+        not RUN_REMOTE_E2E,
         reason="set RUN_E2E_REMOTE_TESTS=1 to run remote tests (costs model spend)",
     ),
     pytest.mark.skipif(
@@ -75,8 +83,11 @@ pytestmark = [
         reason="azd CLI not on PATH",
     ),
     pytest.mark.skipif(
-        not _azd_env_has_deployed_agent(),
-        reason="no deployed agent found in azd env (run `azd deploy` first)",
+        RUN_REMOTE_E2E and not _azd_env_has_deployed_agent(REMOTE_AGENT_NAME),
+        reason=(
+            f"{REMOTE_AGENT_NAME!r} is not deployed in the current azd env "
+            f"(run `azd deploy {REMOTE_AGENT_NAME}` first)"
+        ),
     ),
 ]
 
@@ -85,8 +96,8 @@ def _invoke_remote(prompt: str, *, new_conversation: bool = True, timeout: int =
     """Call the deployed agent and return combined stdout+stderr."""
     args = ["azd", "ai", "agent", "invoke"]
     if new_conversation:
-        args.append("--new-conversation")
-    args.append(prompt)
+        args.extend(["--new-conversation", "--new-session"])
+    args.extend([REMOTE_AGENT_NAME, prompt])
     proc = subprocess.run(
         args,
         cwd=FOUNDRY_DIR,
