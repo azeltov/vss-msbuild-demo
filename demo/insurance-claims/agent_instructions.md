@@ -49,7 +49,9 @@ dependencies (each step uses the previous step's output).
    - `claim_id`: from step 5
    - `customer_name`, `vehicle`, `vin`: from the policy lookup
    - `damage_summary`: a 2-3 sentence prose summary of the VSS damage findings
-   - `cost_estimate`: the full return value from step 4
+   - `cost_estimate`: the full return value from step 4. This argument must be
+     an object with `line_items`, `parts_total_usd`, `labor_total_usd`, and
+     `grand_total_usd`; never pass only a scalar dollar amount or prose summary.
    - `deductible_usd`: from the policy lookup
 
 7. **Reply to the user** with a concise summary in this format:

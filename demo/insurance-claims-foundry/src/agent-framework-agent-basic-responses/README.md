@@ -6,7 +6,7 @@ A [Microsoft Agent Framework](https://github.com/microsoft/agent-framework) host
 
 When given a customer message like:
 
-> "A customer just submitted a damage video. `video_id=302857`. If the VIN is not visible, use policy POL-2025-44912 as fallback. Run the triage workflow."
+> "A customer just submitted a damage video. `video_id=toyota`. If the VIN is not visible, use policy POL-2025-44912 as fallback. Run the triage workflow."
 
 the agent executes this chain:
 
@@ -18,6 +18,16 @@ the agent executes this chain:
 Then replies with a concise claim summary including the payable amount after deductible.
 
 See [tools.py](tools.py) for tool implementations and [instructions.md](instructions.md) for the system prompt.
+
+## Hosted agent variants
+
+`azure.yaml` defines two hosted-agent services. Pass the service name explicitly
+to `azd ai agent run`, `azd deploy`, and `azd ai agent invoke`.
+
+| Service | Project directory | VSS mode |
+|---|---|---|
+| `insurance-claims-triage` | `src/agent-framework-agent-basic-responses` | `MOCK_VSS=true` fixture replay |
+| `insurance-claims-triage-vss` | `src/agent-framework-agent-vss-responses` | `MOCK_VSS=false` live VSS blueprint |
 
 ## Iterate locally — no `azd deploy` required
 
@@ -31,16 +41,16 @@ hosted endpoint — just `python main.py` under the covers, exposed as
 cd demo/insurance-claims-foundry
 
 # Terminal 1 — start the agent (binds :8088, leave running)
-azd ai agent run
+azd ai agent run insurance-claims-triage-vss
 
 # Terminal 2 — invoke with the canonical smoke-test prompt
 azd ai agent invoke --local \
-  "A customer just submitted a damage video. video_id=302857. \
+  "A customer just submitted a damage video. video_id=toyota. \
    If the VIN is not visible, use policy POL-2025-44912 as a fallback. \
    Run the triage workflow."
 ```
 
-Verified end-to-end output (Pexels clip 302857 — wrecked Camry):
+Verified end-to-end output (Toyota pre-upload — wrecked Camry):
 
 ```
 Claim drafted: CLM-YYYYMMDD-44912
@@ -151,7 +161,7 @@ sed -i.bak 's/value: gpt-4.1-mini/value: gpt-4.1/' agent.yaml && rm agent.yaml.b
 In one terminal:
 
 ```bash
-azd ai agent run
+azd ai agent run insurance-claims-triage-vss
 ```
 
 The first run creates a venv and pip-installs `requirements.txt` (~30s). Then logs:
@@ -167,7 +177,7 @@ Leave this running.
 In another terminal:
 
 ```bash
-azd ai agent invoke --local "A customer just submitted a damage video. video_id=302857. If the VIN is not visible, use policy POL-2025-44912 as a fallback. Run the triage workflow."
+azd ai agent invoke --local "A customer just submitted a damage video. video_id=toyota. If the VIN is not visible, use policy POL-2025-44912 as a fallback. Run the triage workflow."
 ```
 
 You should see the agent execute `vss_analyze_video` → `lookup_policy` → `estimate_repair_cost` → `draft_claim_pdf`, then a final claim summary. The PDF is written to `./output/CLM-*.pdf`.
@@ -177,7 +187,7 @@ You should see the agent execute `vss_analyze_video` → `lookup_policy` → `es
 ```bash
 curl -sS -X POST http://localhost:8088/responses \
   -H "Content-Type: application/json" \
-  -d '{"input": "video_id=302857, policy POL-2025-44912 — run triage", "stream": false}'
+  -d '{"input": "video_id=toyota, policy POL-2025-44912 — run triage", "stream": false}'
 ```
 
 ### Multi-turn
@@ -196,7 +206,7 @@ The default `VSS_BASE_URL` points at the workshop's AKS-hosted VSS Agent. The tw
 
 | video_id | Description | Suggested fallback policy |
 |---|---|---|
-| `302857` | Pexels clip 302857 — wrecked car on graffiti street, severe front collision | `POL-2025-44912` (Alex Romero / Camry) |
+| `toyota` | Toyota pre-upload — wrecked car on graffiti street, severe front collision | `POL-2025-44912` (Alex Romero / Camry) |
 | `3974558-hd_1920_1080_30fps` | Pexels clip 3974558 — HD front-end collision walkaround | `POL-2025-58820` (Priya Shankar / Fiat Stilo) |
 
 To upload your own video to VST first, see the wrapper's [`vss_upload_video`](../../../insurance-claims/vss_mcp_server.py) helper in the sibling demo folder, or use the VST API directly:
@@ -228,7 +238,7 @@ curl -X PUT "<presigned-url>" --data-binary @my-claim.mp4 -H "Content-Type: vide
 
 End-to-end smoke test under [../../tests/](../../tests/) that drives the
 **deployed** Foundry hosted agent (no `--local`). It shells out to
-`azd ai agent invoke --new-conversation "..."` and asserts that the
+`azd ai agent invoke <agent-name> --new-conversation "..."` and asserts that the
 response includes a drafted claim with the expected vehicle / VIN / dollar
 amount.
 
@@ -239,6 +249,7 @@ Set the remote-suite gate:
 
 ```bash
 RUN_E2E_REMOTE_TESTS=1
+REMOTE_AGENT_NAME=insurance-claims-triage-vss
 ```
 
 (see [.env.test.example](../../../../.env.test.example) for the full
@@ -252,6 +263,10 @@ the other.
 cd demo/insurance-claims-foundry
 pip install -r requirements-dev.txt    # pytest + python-dotenv
 pytest tests/ -v -s
+
+# Or target an agent explicitly:
+./scripts/test_remote_agent.sh insurance-claims-triage-vss
+./scripts/test_remote_agent.sh insurance-claims-triage
 ```
 
 ### Skip behavior
@@ -260,7 +275,7 @@ Plain `pytest tests/` is safe — the test is skipped when any of these are true
 
 - `RUN_E2E_REMOTE_TESTS` is unset
 - `azd` CLI isn't on PATH
-- No deployed agent in the current azd env (run `azd deploy` first)
+- No deployed agent in the current azd env (run `azd deploy <agent-name>` first)
 
 Each run costs ~30-90s of model + VSS spend, so the gate stays off by
 default. See the App Insights trace (linked from invoke output) for the
@@ -272,11 +287,14 @@ final response text, not individual tool calls.
 Once the local run works:
 
 ```bash
-azd deploy
+./scripts/deploy_agent.sh insurance-claims-triage-vss
+
+# Mock hosted agent:
+./scripts/deploy_agent.sh insurance-claims-triage
 ```
 
 This:
-1. Tars up the `src/agent-framework-agent-basic-responses/` directory
+1. Tars up the selected service project directory
 2. Uploads to ACR
 3. ACR Tasks builds the Dockerfile remotely (no local Docker required)
 4. Pushes the image
@@ -286,7 +304,10 @@ This:
 Then invoke production (no `--local` flag):
 
 ```bash
-azd ai agent invoke "video_id=302857, policy POL-2025-44912 — run triage"
+azd ai agent invoke insurance-claims-triage-vss "video_id=toyota, policy POL-2025-44912 — run triage"
+
+# Mock hosted agent:
+azd ai agent invoke insurance-claims-triage "video_id=toyota, policy POL-2025-44912 — run triage"
 ```
 
 Find the agent in the [Foundry portal](https://ai.azure.com) → your project → **Build** → **Agents**. Traces stream to the Application Insights resource in the same RG.
@@ -295,7 +316,10 @@ Find the agent in the [Foundry portal](https://ai.azure.com) → your project �
 
 The `azd deploy` postdeploy hook fetches the agent's metadata using the **service name from `azure.yaml`**, then grants the agent identity its runtime RBAC. If your `agent.yaml` `name:` differs from the `azure.yaml` `services.<name>:` key, the postdeploy hook gets a **404**, the RBAC step never runs, and **all subsequent invocations fail with HTTP 500 `PermissionDenied`** on the `storage/history` endpoint.
 
-In this project both are `insurance-claims-triage`. If you rename one, rename the other in the same commit.
+Each service key in `azure.yaml` must match that service's `agent.yaml`
+`name:` exactly: `insurance-claims-triage` for mock mode and
+`insurance-claims-triage-vss` for live VSS mode. If you rename one, rename the
+other in the same commit.
 
 Symptoms if they drift:
 ```

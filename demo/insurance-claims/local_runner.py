@@ -173,7 +173,40 @@ TOOLS = [
                     "vehicle": {"type": "string"},
                     "vin": {"type": "string"},
                     "damage_summary": {"type": "string"},
-                    "cost_estimate": {"type": "object"},
+                    "cost_estimate": {
+                        "type": "object",
+                        "properties": {
+                            "line_items": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "panel": {"type": "string"},
+                                        "severity": {"type": "string"},
+                                        "part_cost_usd": {"type": "number"},
+                                        "labor_hours": {"type": "number"},
+                                        "labor_cost_usd": {"type": "number"},
+                                    },
+                                    "required": [
+                                        "panel",
+                                        "severity",
+                                        "part_cost_usd",
+                                        "labor_hours",
+                                        "labor_cost_usd",
+                                    ],
+                                },
+                            },
+                            "parts_total_usd": {"type": "number"},
+                            "labor_total_usd": {"type": "number"},
+                            "grand_total_usd": {"type": "number"},
+                        },
+                        "required": [
+                            "line_items",
+                            "parts_total_usd",
+                            "labor_total_usd",
+                            "grand_total_usd",
+                        ],
+                    },
                     "deductible_usd": {"type": "number"},
                 },
                 "required": [
