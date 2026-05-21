@@ -41,7 +41,7 @@ def _setup_observability() -> None:
     except ImportError:
         return
     configure_azure_monitor(connection_string=conn)
-    enable_instrumentation()
+    enable_instrumentation(enable_sensitive_data=True)
 
 
 def main():
