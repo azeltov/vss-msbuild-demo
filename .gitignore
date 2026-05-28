@@ -62,3 +62,4 @@ demo/**/foundry_config.json
 .env*
 !.env.example
 !.env.test.example
+demo/insurance-claims-architecture.pptx
